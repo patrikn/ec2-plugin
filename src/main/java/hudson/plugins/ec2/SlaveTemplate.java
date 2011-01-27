@@ -1,31 +1,36 @@
 package hudson.plugins.ec2;
 
-import com.xerox.amazonws.ec2.EC2Exception;
-import com.xerox.amazonws.ec2.ImageDescription;
-import com.xerox.amazonws.ec2.InstanceType;
-import com.xerox.amazonws.ec2.Jec2;
-import com.xerox.amazonws.ec2.KeyPairInfo;
-import com.xerox.amazonws.ec2.ReservationDescription.Instance;
+import hudson.Extension;
+import hudson.Util;
 import hudson.model.Describable;
+import hudson.model.TaskListener;
 import hudson.model.Descriptor;
 import hudson.model.Descriptor.FormException;
 import hudson.model.Hudson;
-import hudson.model.TaskListener;
+import hudson.model.Hudson.CloudList;
 import hudson.model.Label;
 import hudson.model.Node;
-import hudson.Extension;
-import hudson.Util;
+import hudson.slaves.Cloud;
 import hudson.util.FormValidation;
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
 
-import javax.servlet.ServletException;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+
+import javax.servlet.ServletException;
+
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
+
+import com.xerox.amazonws.ec2.EC2Exception;
+import com.xerox.amazonws.ec2.ImageDescription;
+import com.xerox.amazonws.ec2.InstanceType;
+import com.xerox.amazonws.ec2.Jec2;
+import com.xerox.amazonws.ec2.KeyPairInfo;
+import com.xerox.amazonws.ec2.ReservationDescription.Instance;
 
 /**
  * Template of {@link EC2Slave} to launch.
@@ -185,29 +190,47 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
          * Check that the AMI requested is available in the cloud and can be used.
          */
         public FormValidation doValidateAmi(
-                @QueryParameter String accessId, @QueryParameter String secretKey,
-                @QueryParameter String ec2EndpointUrl,
+                @QueryParameter String accessId,
+                @QueryParameter String secretKey,
                 final @QueryParameter String ami) throws IOException, ServletException {
-            Jec2 jec2 = EC2Cloud.connect(accessId, secretKey, EC2Cloud.checkEndPoint(ec2EndpointUrl));
-            if(jec2!=null) {
-                try {
-                    List<String> images = new LinkedList<String>();
-                    images.add(ami);
-                    List<String> owners = new LinkedList<String>();
-                    List<String> users = new LinkedList<String>();
-                    users.add("self"); // if we can't run it its not useful.
-                    List<ImageDescription> img = jec2.describeImages(
-                            images, owners, users, null);
-                    if(img==null || img.isEmpty())
-                        // de-registered AMI causes an empty list to be returned. so be defensive
-                        // against other possibilities
-                        return FormValidation.error("No such AMI, or not usable with this accessId: "+ami);
-                    return FormValidation.ok(img.get(0).getImageLocation()+" by "+img.get(0).getImageOwnerId());
-                } catch (EC2Exception e) {
-                    return FormValidation.error(e.getMessage());
+            CloudList clouds = Hudson.getInstance().clouds;
+            EC2Cloud myCloud = null;
+            for (Cloud cloud : clouds) {
+                if (cloud instanceof EC2Cloud) {
+                    List<SlaveTemplate> templates = ((EC2Cloud) cloud).getTemplates();
+                    for (SlaveTemplate slaveTemplate : templates) {
+                        if (ami.equals(slaveTemplate.ami)) {
+                            myCloud = (EC2Cloud) cloud;
+                            break;
+                        }
+                    }
                 }
-            } else
-                return FormValidation.ok();   // can't test
+            }
+            if (myCloud != null) {
+                Jec2 jec2 = EC2Cloud.connect(accessId, secretKey,  myCloud.getEc2EndpointUrl());
+                if(jec2!=null) {
+                    try {
+                        List<String> images = new LinkedList<String>();
+                        images.add(ami);
+                        List<String> owners = new LinkedList<String>();
+                        List<String> users = new LinkedList<String>();
+                        users.add("self"); // if we can't run it its not useful.
+                        List<ImageDescription> img = jec2.describeImages(
+                            images, owners, users, null);
+                        if(img==null || img.isEmpty())
+                            // de-registered AMI causes an empty list to be returned. so be defensive
+                            // against other possibilities
+                            return FormValidation.error("No such AMI, or not usable with this accessId: "+ami);
+                        return FormValidation.ok(img.get(0).getImageLocation()+" by "+img.get(0).getImageOwnerId());
+                    } catch (EC2Exception e) {
+                        return FormValidation.error(e.getMessage());
+                    }
+                } else
+                    return FormValidation.ok();   // can't test
+            }
+            else {
+                return FormValidation.error("Couldn't find cloud configuration");
+            }
         }
     }
 }
