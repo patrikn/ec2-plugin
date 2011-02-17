@@ -109,4 +109,8 @@ public class EC2Computer extends SlaveComputer {
     public String getRootCommandPrefix() {
         return getNode().getRootCommandPrefix();
     }
+    
+    public void flushInstanceCache() {
+        ec2InstanceDescription = null;
+    }
 }
