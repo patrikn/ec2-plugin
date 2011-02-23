@@ -246,7 +246,7 @@ public abstract class EC2Cloud extends Cloud {
      */
     public synchronized Jec2 connect() throws EC2Exception {
         try {
-            if (connection != null) {
+            if (connection == null) {
                 connection = connect(accessId, secretKey, getEc2EndpointUrl());
             }
             return connection;
