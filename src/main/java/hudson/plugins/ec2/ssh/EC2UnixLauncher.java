@@ -57,11 +57,11 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 }
             }
             conn = cleanupConn;
-
+            
             SCPClient scp = conn.createSCPClient();
             String initScript = computer.getNode().initScript;
 
-            if(initScript!=null && initScript.trim().length()>0 && conn.exec("test -e /.hudson-run-init", logger) !=0) {
+            if(initScript!=null && initScript.trim().length()>0 && conn.exec("test -e /tmp/.hudson-run-init", logger) !=0) {
                 logger.println("Executing init script");
                 scp.put(initScript.getBytes("UTF-8"),"init.sh","/tmp","0700");
                 Session sess = conn.openSession();
@@ -79,7 +79,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 }
 
                 // leave the completion marker
-                scp.put(new byte[0],".hudson-run-init","/","0600");
+                scp.put(new byte[0],".hudson-run-init","/tmp","0600");
 
             }
 
@@ -150,6 +150,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 logger.println("Authentication failed");
                 return FAILED;
             }
+            /*
             if (!computer.getRemoteAdmin().equals("root")) {
                 // Get root working, so we can scp in etc.
                 Session sess = bootstrapConn.openSession();
@@ -166,7 +167,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                     return FAILED;
                 }
                 return RECONNECT;
-            } else {
+            }*/ else {
                 closeBootstrap = false;
                 return SAMEUSER;
             }
