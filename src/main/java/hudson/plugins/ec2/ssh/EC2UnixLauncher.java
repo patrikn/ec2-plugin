@@ -1,5 +1,9 @@
 package hudson.plugins.ec2.ssh;
 
+import java.io.IOException;
+import java.io.PrintStream;
+import java.net.URL;
+
 import com.trilead.ssh2.Connection;
 import com.trilead.ssh2.SCPClient;
 import com.trilead.ssh2.ServerHostKeyVerifier;
@@ -18,10 +22,6 @@ import hudson.slaves.ComputerLauncher;
 import org.apache.commons.io.IOUtils;
 import org.jets3t.service.S3ServiceException;
 
-import java.io.IOException;
-import java.io.PrintStream;
-import java.net.URL;
-
 /**
  * {@link ComputerLauncher} that connects to a Unix slave on EC2 by using SSH.
  * 
@@ -34,14 +34,14 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
     private final int RECONNECT=-2;
 
     protected void launch(EC2Computer computer, PrintStream logger, Instance inst) throws IOException, EC2Exception, InterruptedException, S3ServiceException {
-        logger.println("Connecting to "+inst.getDnsName() + " on port " + computer.getSshPort());
+
         final Connection bootstrapConn;
         final Connection conn;
         Connection cleanupConn = null; // java's code path analysis for final doesn't work that well.
         boolean successful = false;
         
         try {
-            bootstrapConn = connectToSsh(inst, computer.getSshPort(), logger);
+            bootstrapConn = connectToSsh(computer, logger);
             int bootstrapResult = bootstrap(bootstrapConn, computer, logger);
             if (bootstrapResult == FAILED)
                 return; // bootstrap closed for us.
@@ -49,7 +49,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 cleanupConn = bootstrapConn; // take over the connection
             else {
                 // connect fresh as ROOT
-                cleanupConn = connectToSsh(inst, computer.getSshPort(), logger);
+                cleanupConn = connectToSsh(computer, logger);
                 KeyPairInfo key = EC2Cloud.get().getKeyPair();
                 if (!cleanupConn.authenticateWithPublicKey("root", key.getKeyMaterial().toCharArray(), "")) {
                     logger.println("Authentication failed");
@@ -66,7 +66,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 scp.put(initScript.getBytes("UTF-8"),"init.sh","/tmp","0700");
                 Session sess = conn.openSession();
                 sess.requestDumbPTY(); // so that the remote side bundles stdout and stderr
-                sess.execCommand(computer.getRootCommandPrefix() + "/tmp/init.sh");
+                sess.execCommand("/tmp/init.sh");
 
                 sess.getStdin().close();    // nothing to write here
                 sess.getStderr().close();   // we are not supposed to get anything from stderr
@@ -150,8 +150,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                 logger.println("Authentication failed");
                 return FAILED;
             }
-            /*
-            if (!computer.getRemoteAdmin().equals("root")) {
+            if (!computer.getRemoteAdmin().equals("root") && computer.getRootCommandPrefix().trim().length() > 0) {
                 // Get root working, so we can scp in etc.
                 Session sess = bootstrapConn.openSession();
                 sess.requestDumbPTY(); // so that the remote side bundles stdout and stderr
@@ -167,7 +166,7 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
                     return FAILED;
                 }
                 return RECONNECT;
-            }*/ else {
+            } else {
                 closeBootstrap = false;
                 return SAMEUSER;
             }
@@ -177,10 +176,17 @@ public class EC2UnixLauncher extends EC2ComputerLauncher {
         }
     }
 
-    private Connection connectToSsh(Instance inst, int sshPort, PrintStream logger) throws InterruptedException {
+    private Connection connectToSsh(EC2Computer computer, PrintStream logger) throws EC2Exception, InterruptedException {
         while(true) {
             try {
-                Connection conn = new Connection(inst.getDnsName(),sshPort);
+                String host = computer.updateInstanceDescription().getDnsName();
+                if ("0.0.0.0".equals(host)) {
+                    logger.println("Invalid host 0.0.0.0, your host is most likely waiting for an ip address.");
+                    throw new IOException("goto sleep");
+                }
+                int port = computer.getSshPort();
+                logger.println("Connecting to " + host + " on port " + port + ". ");
+                Connection conn = new Connection(host, port);
                 // currently OpenSolaris offers no way of verifying the host certificate, so just accept it blindly,
                 // hoping that no man-in-the-middle attack is going on.
                 conn.connect(new ServerHostKeyVerifier() {

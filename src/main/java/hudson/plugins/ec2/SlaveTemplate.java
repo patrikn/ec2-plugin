@@ -1,29 +1,12 @@
 package hudson.plugins.ec2;
 
-import hudson.Extension;
-import hudson.Util;
-import hudson.model.Describable;
-import hudson.model.TaskListener;
-import hudson.model.Descriptor;
-import hudson.model.Descriptor.FormException;
-import hudson.model.Hudson;
-import hudson.model.Hudson.CloudList;
-import hudson.model.Label;
-import hudson.model.Node;
-import hudson.slaves.Cloud;
-import hudson.util.FormValidation;
-
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-
 import javax.servlet.ServletException;
-
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
 
 import com.xerox.amazonws.ec2.EC2Exception;
 import com.xerox.amazonws.ec2.ImageDescription;
@@ -31,6 +14,19 @@ import com.xerox.amazonws.ec2.InstanceType;
 import com.xerox.amazonws.ec2.Jec2;
 import com.xerox.amazonws.ec2.KeyPairInfo;
 import com.xerox.amazonws.ec2.ReservationDescription.Instance;
+import hudson.Extension;
+import hudson.Util;
+import hudson.model.Describable;
+import hudson.model.Descriptor;
+import hudson.model.Descriptor.FormException;
+import hudson.model.Hudson;
+import hudson.model.Label;
+import hudson.model.Node;
+import hudson.model.TaskListener;
+import hudson.model.labels.LabelAtom;
+import hudson.util.FormValidation;
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
 
 /**
  * Template of {@link EC2Slave} to launch.
@@ -52,7 +48,7 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
     public final String jvmopts;
     protected transient EC2Cloud parent;
 
-    private transient /*almost final*/ Set<Label> labelSet;
+    private transient /*almost final*/ Set<LabelAtom> labelSet;
 
     @DataBoundConstructor
     public SlaveTemplate(String ami, String remoteFS, String sshPort, InstanceType type, String labelString, String description, String initScript, String userData, String numExecutors, String remoteAdmin, String rootCommandPrefix, String jvmopts) {
@@ -104,6 +100,10 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
 
     public String getRootCommandPrefix() {
         return rootCommandPrefix;
+    }
+    
+    public Set getLabelSet(){
+    	return labelSet;
     }
     
     /**
@@ -190,20 +190,24 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
          * Check that the AMI requested is available in the cloud and can be used.
          */
         public FormValidation doValidateAmi(
-                @QueryParameter String accessId,
-                @QueryParameter String secretKey,
+                @QueryParameter String accessId, @QueryParameter String secretKey,
+                @QueryParameter AwsRegion region,
                 final @QueryParameter String ami) throws IOException, ServletException {
-            CloudList clouds = Hudson.getInstance().clouds;
-            EC2Cloud myCloud = null;
-            for (Cloud cloud : clouds) {
-                if (cloud instanceof EC2Cloud) {
-                    List<SlaveTemplate> templates = ((EC2Cloud) cloud).getTemplates();
-                    for (SlaveTemplate slaveTemplate : templates) {
-                        if (ami.equals(slaveTemplate.ami)) {
-                            myCloud = (EC2Cloud) cloud;
-                            break;
-                        }
-                    }
+            Jec2 jec2 = EC2Cloud.connect(accessId, secretKey, region.ec2Endpoint);
+            if(jec2!=null) {
+                try {
+                    List<String> images = new LinkedList<String>();
+                    images.add(ami);
+                    List<String> owners = new LinkedList<String>();
+                    List<String> users = new LinkedList<String>();
+                    List<ImageDescription> img = jec2.describeImages(images, owners, users);
+                    if(img==null || img.isEmpty())
+                        // de-registered AMI causes an empty list to be returned. so be defensive
+                        // against other possibilities
+                        return FormValidation.error("No such AMI, or not usable with this accessId: "+ami);
+                    return FormValidation.ok(img.get(0).getImageLocation()+" by "+img.get(0).getImageOwnerId());
+                } catch (EC2Exception e) {
+                    return FormValidation.error(e.getMessage());
                 }
             }
             if (myCloud != null) {

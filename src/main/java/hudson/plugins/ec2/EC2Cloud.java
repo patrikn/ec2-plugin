@@ -43,7 +43,8 @@ import java.util.concurrent.Callable;
 import java.util.logging.Logger;
 
 import org.jets3t.service.Jets3tProperties;
-import static java.util.logging.Level.WARNING;
+import java.util.logging.Level;
+
 
 /**
  * Hudson's view of EC2. 
@@ -63,6 +64,8 @@ public abstract class EC2Cloud extends Cloud {
     private final List<SlaveTemplate> templates;
     private transient KeyPairInfo usableKeyPair;
 
+    private transient Jec2 connection;
+    
     protected EC2Cloud(String id, String accessId, String secretKey, String privateKey, String instanceCapStr, List<SlaveTemplate> templates) {
         super(id);
         this.accessId = accessId.trim();
@@ -121,7 +124,7 @@ public abstract class EC2Cloud extends Cloud {
      */
     public SlaveTemplate getTemplate(Label label) {
         for (SlaveTemplate t : templates)
-            if(t.containsLabel(label))
+        	if(label.matches(t.getLabelSet()))
                 return t;
         return null;
     }
@@ -195,12 +198,16 @@ public abstract class EC2Cloud extends Cloud {
     public Collection<PlannedNode> provision(Label label, int excessWorkload) {
         try {
 
-            final SlaveTemplate t = getTemplate(label);
-
             List<PlannedNode> r = new ArrayList<PlannedNode>();
+            final SlaveTemplate t = getTemplate(label);
+            if (t == null) {
+                return r; // unknown template (label not bound to this cloud)
+            }
             for( ; excessWorkload>0; excessWorkload-- ) {
-                if(countCurrentEC2Slaves()>=instanceCap)
+                if(countCurrentEC2Slaves()>=instanceCap) {
+                    LOGGER.log(Level.INFO, "Instance cap reached, not provisioning.");
                     break;      // maxed out
+                }
 
                 r.add(new PlannedNode(t.getDisplayName(),
                         Computer.threadPoolForRemoting.submit(new Callable<Node>() {
@@ -225,7 +232,7 @@ public abstract class EC2Cloud extends Cloud {
             }
             return r;
         } catch (EC2Exception e) {
-            LOGGER.log(WARNING,"Failed to count the # of live instances on EC2",e);
+            LOGGER.log(Level.WARNING,"Failed to count the # of live instances on EC2",e);
             return Collections.emptyList();
         }
     }
@@ -431,12 +438,12 @@ public abstract class EC2Cloud extends Cloud {
                     // check if this key exists
                     EC2PrivateKey pk = new EC2PrivateKey(privateKey);
                     if(pk.find(jec2)==null)
-                        return FormValidation.error("The private key entered below isn't registered to EC2 (fingerprint is "+pk.getFingerprint()+")");
+                        return FormValidation.error("The private key entered below isn't registered to this EC2 region (fingerprint is "+pk.getFingerprint()+")");
                 }
 
                 return FormValidation.ok(Messages.EC2Cloud_Success());
             } catch (EC2Exception e) {
-                LOGGER.log(WARNING, "Failed to check EC2 credential",e);
+                LOGGER.log(Level.WARNING, "Failed to check EC2 credential",e);
                 return FormValidation.error(e.getMessage());
             }
         }
@@ -466,14 +473,13 @@ public abstract class EC2Cloud extends Cloud {
 
                 return FormValidation.ok(Messages.EC2Cloud_Success());
             } catch (EC2Exception e) {
-                LOGGER.log(WARNING, "Failed to check EC2 credential",e);
+                LOGGER.log(Level.WARNING, "Failed to check EC2 credential",e);
                 return FormValidation.error(e.getMessage());
             }
         }
     }
 
     private static final Logger LOGGER = Logger.getLogger(EC2Cloud.class.getName());
-    private Jec2 connection;
 
     private static boolean isSSL(URL endpoint) {
         return endpoint.getProtocol().equals("https");
