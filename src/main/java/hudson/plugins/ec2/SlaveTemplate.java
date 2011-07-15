@@ -210,28 +210,6 @@ public class SlaveTemplate implements Describable<SlaveTemplate> {
                     return FormValidation.error(e.getMessage());
                 }
             }
-            if (myCloud != null) {
-                Jec2 jec2 = EC2Cloud.connect(accessId, secretKey,  myCloud.getEc2EndpointUrl());
-                if(jec2!=null) {
-                    try {
-                        List<String> images = new LinkedList<String>();
-                        images.add(ami);
-                        List<String> owners = new LinkedList<String>();
-                        List<String> users = new LinkedList<String>();
-                        users.add("self"); // if we can't run it its not useful.
-                        List<ImageDescription> img = jec2.describeImages(
-                            images, owners, users, null);
-                        if(img==null || img.isEmpty())
-                            // de-registered AMI causes an empty list to be returned. so be defensive
-                            // against other possibilities
-                            return FormValidation.error("No such AMI, or not usable with this accessId: "+ami);
-                        return FormValidation.ok(img.get(0).getImageLocation()+" by "+img.get(0).getImageOwnerId());
-                    } catch (EC2Exception e) {
-                        return FormValidation.error(e.getMessage());
-                    }
-                } else
-                    return FormValidation.ok();   // can't test
-            }
             else {
                 return FormValidation.error("Couldn't find cloud configuration");
             }
